@@ -1,0 +1,13 @@
+matplotlib~=3.8.0
+mdtraj~=1.9.6
+numpy~=1.22.4
+seaborn~=0.12.2
+scipy~=1.12.0
+openbabel~=3.1.1
+pandas~=1.5.0
+vina~=1.2.6
+meeko~=0.6.0
+
+ADFR suite (https://ccsb.scripps.edu/adfr)
+DiffDock GitHub repository (https://github.com/gcorso/DiffDock)
+eBox perl script (https://github.com/michal-brylinski/eboxsize)
