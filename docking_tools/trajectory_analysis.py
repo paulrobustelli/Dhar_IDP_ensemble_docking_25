@@ -1,5 +1,5 @@
-import os, sys
 from __future__ import print_function, division
+import os, sys
 import mdtraj as md
 import numpy as np
 import math
@@ -7,8 +7,9 @@ from numpy import sum
 from numpy.linalg import lstsq
 import matplotlib.pyplot as plt
 import seaborn as sns
-from itertools import combinations, product 
+import itertools
 import scipy.stats as stats
+
 
 
 ### 1D CONTACTS AND DUAL RESIDUE CONTACTS 
@@ -36,22 +37,30 @@ def to_distance_matrix(distances: np.ndarray,
             "Given dimensions (n,m) do not correspond to the dimension of the flattened distances"
 
         return distances.reshape(-1, n, m).squeeze()
-    
+
+def product(x:np.ndarray, y:np.ndarray):
+    return np.asarray(list(itertools.product(x, y)))
+
+def combinations(x):
+    return np.asarray(list(itertools.combinations(x, 2)))
+
 def residue_distances(traj,
                       index_0: np.ndarray,
                       index_1: np.ndarray = None):
+    
     # intra distance case
     if index_1 is None:
         indices = combinations(index_0)
-        return md.compute_contacts(traj, indices)[0], indices
+        dist = md.compute_contacts(traj, indices)[0]
+        return to_distance_matrix(dist, dist.shape[0]), indices
 
     # inter distance case
     else:
         indices = product(index_0, index_1)
         dist = md.compute_contacts(traj, indices)[0]
-        return to_distance_matrix(dist, dist.shape[0]), indices
+        return dist
     
-def dual_contact_(traj, residue_idx):  
+def dual_contact(traj, residue_idx):  
     protein = traj.atom_slice(traj.top.select('protein'))
     protein_ligand_distances = residue_distances(traj, np.arange(protein.n_residues), np.array([residue_idx]))
     protein_ligand_contacts = np.where(protein_ligand_distances < 0.6, 1, 0)
@@ -64,7 +73,7 @@ def dual_contact_(traj, residue_idx):
 ### SPECIFIC INTERMOLECULAR INTERACTIONS
 
 # charge contacts
-def charge_contacts_(trj, cutoff=0.5, Ligand_Pos_Charges=[], Ligand_Neg_Charges=[]):
+def charge_contacts(trj, cutoff=0.5, Ligand_Pos_Charges=[], Ligand_Neg_Charges=[]):
     """ Now, not hard-coded! :) """ 
     top = trj.atom_slice(trj.topology.select('protein')).topology
     residues = top.n_residues
@@ -119,7 +128,7 @@ def charge_contacts_(trj, cutoff=0.5, Ligand_Pos_Charges=[], Ligand_Neg_Charges=
     return Charge_Contacts
 
 # hydrophobic interactions
-def hphob_contacts_(trj,ligand_residue_index,cutoff=0.4):
+def hphob_contacts(trj,ligand_residue_index,cutoff=0.4):
     top = trj.topology
     protein_top = trj.atom_slice(trj.topology.select('protein')).topology
     residues = protein_top.n_residues
@@ -151,6 +160,7 @@ def hphob_contacts_(trj,ligand_residue_index,cutoff=0.4):
     return Hphob_res_contacts
 
 # Functions for aromatic stacking calculations
+
 def normvector_connect(point1, point2): 
     vec = point1-point2
     vec = vec/np.sqrt(np.dot(vec, vec))
@@ -177,7 +187,7 @@ def find_plane_normal(points):
         bu = -nb_c
         au = -na_c
     normal = np.asarray([au, bu, cu])
-    normal /= math.sqrt(math.dot(normal, normal))
+    normal /= math.sqrt(np.dot(normal, normal))
     return normal
 
 def find_plane_normal2_assign_atomid(positions, id1=0, id2=1, id3=2):
@@ -211,7 +221,7 @@ def get_ring_center_normal_trj_assign_atomid(position_array, id1=0, id2=1, id3=2
     return centers_normals
 
 # aromatic stacking
-def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
+def aro_contacts(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
                   p_stack_distance_cutoff = 0.65, t_stack_distance_cutoff = 0.75):
     """ Where ligand rings is a list of lists, where each item is a list 
     of atom indices for that particular aromatic ring."""
@@ -223,7 +233,7 @@ def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
 
     # the number of aromatic rings in the ligand: 
     ligrings = len(ligand_rings)
-    print("Ligand Aromatics Rings:", ligrings)
+    # print("Ligand Aromatics Rings:", ligrings)
 
     # for each aromatic ring, get the ring center and the point normal to it for each frame
     ligand_ring_params = []
@@ -270,14 +280,17 @@ def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
     
     # The # of rings in the protein
     sidechains = len(prot_rings)
-    print(trj.n_frames, sidechains)
+    # print(trj.n_frames, sidechains)
 
     # initializing dictionaries...
+    Ringstacked_old = {}
     Ringstacked = {}
+    Quadrants = {}
     Stackparams = {}
     Aro_Contacts = {}
     Pstack = {}
     Tstack = {}
+
 
     """
     print("q1: alpha<=45 and beta>=135")
@@ -327,15 +340,20 @@ def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
                 phi = np.rad2deg(angle(protnormal, connect))
                 phis[i, j] = np.abs(phi)-2*(np.abs(phi) > 90.0)*(np.abs(phi)-90.0)
 
+
         # iterating through the protein rings again 
         for j in range(0, sidechains):
             name2 = prot_ring_index[j] # the resSeq
-            print(f'====> {prot_ring_name[j]}')
+            # print(f'====> {prot_ring_name[j]}')
 
             # see where the rings make contact according to our cutoff
             Ringstack = np.column_stack((dists[:, j], alphas[:, j], betas[:, j], thetas[:, j], phis[:, j]))
             r = np.where(dists[:, j] <= stack_distance_cutoff)[0]
             aro_contacts[:, j][r] = 1
+
+            # New Definitions
+            # p-stack: r < 6.5 Å, θ < 60° and ϕ < 60°.
+            # t-stack: r < 7.5 Å, 75° < θ < 90° and ϕ < 60°.
             
             r_pstrict = np.where(dists[:, j] <= p_stack_distance_cutoff)[0]
             r_tstrict = np.where(dists[:, j] <= t_stack_distance_cutoff)[0]
@@ -357,12 +375,15 @@ def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
             quadrant[:,j][q2]=2
             quadrant[:,j][q3]=3
             quadrant[:,j][q4]=4
+            total_stacked=len(q1)+len(q2)+len(q3)+len(q4)
             
             # print("q1:",len(q1),"q2:",len(q2),"q3:",len(q3),"q4:",len(q4))
             # print("q1:",len(q1)/total_stacked,"q2:",len(q2)/total_stacked,"q3:",len(q3)/total_stacked,"q4:",len(q4)/total_stacked)
             
             Stackparams[name][name2]=Ringstack
+
             # print(np.average(Ringstack,axis=0))
+            
             f = np.where(thetas[:, j] <= 45)
             g = np.where(phis[:, j] <= 60)
             h = np.where(thetas[:, j] >= 75)
@@ -373,26 +394,34 @@ def aro_contacts_(trj, ligand_rings=[], stack_distance_cutoff = 0.65,
             tstacked[:, j][tnew] = 1
             stacked[:, j][pnew] = 1
             stacked[:, j][tnew] = 1
+            total_stacked = len(pnew)+len(tnew)
+            
             # print("===>Contacts:", len(r), "Total:", total_stacked,"P-stack:", len(pnew), "T-stack:", len(tnew))
+            
             Stackparams[name][name2] = Ringstack
 
-        # Pstack[name] = pstacked
-        # Tstack[name] = tstacked
-        # Aro_Contacts[name] = aro_contacts
-        # Ringstacked[name] = stacked
-        # Quadrants[name]=quadrant
+        
+        Pstack[name] = pstacked
+        Tstack[name] = tstacked
+        Aro_Contacts[name] = aro_contacts
+        Ringstacked[name] = stacked
+        Quadrants[name]=quadrant
+    
     
     aro_res_index = np.array(prot_ring_index)-residue_offset
     aromatic_stacking_contacts_ = np.zeros((trj.n_frames, residues))
 
     # for each protein aromatic residue, 
     for i in range(0, len(aro_res_index)):
+        
         # for each ligand aromatic ring, 
         for j in range(0, ligrings): 
+            
             # add the ligand interactions from Ringstacked
             aromatic_stacking_contacts_[:, aro_res_index[i]] += Ringstacked[f'Lig_ring.{j}'][:, i]
         
     return aromatic_stacking_contacts_ # , Stackparams
+
 
 # For hydrogen bond calculation
 def _get_bond_triplets(topology, lig_donors, exclude_water=True, sidechain_only=False):
@@ -525,7 +554,7 @@ def baker_hubbard2(traj, freq=0.1, exclude_water=True, periodic=True, sidechain_
     return bond_triplets.compress(mask, axis=0)
 
 # hydrogen bonds
-def hbond_(trj, ligand_residue_index, lig_hbond_donors=[]):
+def hbond(trj, ligand_residue_index, lig_hbond_donors=[]):
     top = trj.topology
     protein_top = trj.atom_slice(trj.topology.select('protein')).topology
     residues = protein_top.n_residues
@@ -580,7 +609,7 @@ def hbond_(trj, ligand_residue_index, lig_hbond_donors=[]):
 
 
 ### COMPUTING ANGLES
-def angle(x1, x2, x3): 
+def angle_2(x1, x2, x3): 
     v1 = x1 - x2
     v2 = x3 - x2
     v1 = v1 / np.linalg.norm(v1, axis=-1, keepdims=True)
