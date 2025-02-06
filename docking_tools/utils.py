@@ -44,6 +44,7 @@ def sort_strs(strs: list, max=False, indexed: bool=False):
         return strs[np.flip(indices)]
     else:
         return strs[indices]
+        
 
 def lsdir(dir, keyword: "list or str" = None,
           exclude: "list or str" = None,
